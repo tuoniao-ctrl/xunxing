@@ -1,12 +1,25 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { initDatabase } = require('./database/init');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ========== CORS — 允许 CloudStudio 前端跨域访问 ==========
+// ========== Supabase 客户端初始化 ==========
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error('❌ 缺少环境变量：SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY 必须设置');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
+
+// ========== CORS ==========
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -18,12 +31,10 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ========== 健康检查端点（CloudStudio 前端检测后端可用性） ==========
+// ========== 健康检查 ==========
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now(), version: 'v8' });
+  res.json({ status: 'ok', timestamp: Date.now(), version: 'v9-supabase' });
 });
-
-const db = initDatabase();
 
 // ========== 匹配规则映射 ==========
 const COUNTERPART_MAP = {
@@ -39,62 +50,83 @@ function generateToken() {
 }
 
 function parseRelationshipTypes(typesStr) {
+  if (!typesStr) return [];
+  if (Array.isArray(typesStr)) return typesStr;
   try { return JSON.parse(typesStr); } catch { return []; }
 }
 
 /**
- * 身份验证中间件：通过 userId + token 验证用户身份
- * 只有 token 持有者才能操作该 userId 的数据 — 其他人不可随意删改
+ * 身份验证：通过 userId + token 验证用户身份
  */
-function verifyUser(userId, token) {
+async function verifyUser(userId, token) {
   if (!userId || !token) return null;
-  return db.prepare('SELECT * FROM users WHERE id = ? AND access_token = ?').get(userId, token);
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .eq('access_token', token)
+    .maybeSingle();
+  return data || null;
 }
 
 // ========== API 路由 ==========
 
 /**
  * POST /api/register
- * Body: { nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id }
  */
-app.post('/api/register', (req, res) => {
+app.post('/api/register', async (req, res) => {
   try {
     const { nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id } = req.body;
 
     if (!nickname || !age || !gender || !orientation || !relationship_types || !wechat_id) {
       return res.status(400).json({ error: '请填写所有必填信息' });
     }
-
     if (!['男', '女'].includes(gender)) {
       return res.status(400).json({ error: '性别只能选择男或女' });
     }
-
-    if (!Array.isArray(relationship_types) || relationship_types.length === 0) {
+    const typesArr = Array.isArray(relationship_types) ? relationship_types : JSON.parse(relationship_types || '[]');
+    if (typesArr.length === 0) {
       return res.status(400).json({ error: '请至少选择一个想找的关系类型' });
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE wechat_id = ?').get(wechat_id);
+    // 检查微信号是否已注册
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('wechat_id', wechat_id)
+      .maybeSingle();
+
     if (existing) {
       return res.status(400).json({ error: '该微信号已注册，请直接登录查看匹配' });
     }
 
     const accessToken = generateToken();
-    const typesJson = JSON.stringify(relationship_types);
 
-    const stmt = db.prepare(`
-      INSERT INTO users (nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id, access_token)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
+        nickname,
+        age: parseInt(age),
+        gender,
+        region: region || '',
+        constellation: constellation || '',
+        mbti: mbti || '',
+        orientation,
+        relationship_types: JSON.stringify(typesArr),
+        wechat_id,
+        access_token: accessToken
+      })
+      .select()
+      .single();
 
-    const result = stmt.run(
-      nickname, age, gender,
-      region || '', constellation || '', mbti || '',
-      orientation, typesJson, wechat_id, accessToken
-    );
+    if (error) {
+      console.error('注册 DB 错误:', error);
+      return res.status(500).json({ error: '服务器错误，请稍后再试' });
+    }
 
     res.json({
       success: true,
-      user_id: result.lastInsertRowid,
+      user_id: data.id,
       access_token: accessToken,
       message: '注册成功！现在可以选择想找的类型开始匹配了'
     });
@@ -107,12 +139,17 @@ app.post('/api/register', (req, res) => {
 /**
  * POST /api/login
  */
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   try {
     const { wechat_id } = req.body;
     if (!wechat_id) return res.status(400).json({ error: '请输入微信号' });
 
-    const user = db.prepare('SELECT id, nickname, access_token FROM users WHERE wechat_id = ?').get(wechat_id);
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, nickname, access_token')
+      .eq('wechat_id', wechat_id)
+      .maybeSingle();
+
     if (!user) return res.status(404).json({ error: '未找到该微信号的注册信息，请先注册' });
 
     res.json({
@@ -129,41 +166,53 @@ app.post('/api/login', (req, res) => {
 
 /**
  * GET /api/browse/:userId
- * 精准匹配：type + gender + age_min + age_max
- * 仅返回活跃用户池（未匹配的）
  */
-app.get('/api/browse/:userId', (req, res) => {
+app.get('/api/browse/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { token, type, gender, age_min, age_max } = req.query;
 
-    const currentUser = verifyUser(userId, token);
+    const currentUser = await verifyUser(userId, token);
     if (!currentUser) return res.status(401).json({ error: '身份验证失败' });
 
-    const allUsers = db.prepare(`
-      SELECT id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, created_at
-      FROM users WHERE id != ?
-      ORDER BY created_at DESC
-    `).all(userId);
+    // 获取所有其他用户
+    const { data: allUsers, error } = await supabase
+      .from('users')
+      .select('id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, created_at')
+      .neq('id', userId)
+      .order('created_at', { ascending: false });
 
-    const myLikes = db.prepare('SELECT to_user_id FROM likes WHERE from_user_id = ?').all(userId);
-    const likedUserIds = new Set(myLikes.map(l => l.to_user_id));
+    if (error) {
+      console.error('浏览 DB 错误:', error);
+      return res.status(500).json({ error: '服务器错误' });
+    }
 
-    const myMatches = db.prepare(`
-      SELECT user1_id, user2_id FROM matches WHERE user1_id = ? OR user2_id = ?
-    `).all(userId, userId);
+    // 获取当前用户的点赞列表
+    const { data: myLikes } = await supabase
+      .from('likes')
+      .select('to_user_id')
+      .eq('from_user_id', userId);
+    const likedUserIds = new Set((myLikes || []).map(l => l.to_user_id));
+
+    // 获取匹配列表
+    const { data: myMatches } = await supabase
+      .from('matches')
+      .select('user1_id, user2_id')
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+
     const matchedUserIds = new Set();
-    myMatches.forEach(m => {
+    (myMatches || []).forEach(m => {
       matchedUserIds.add(m.user1_id === parseInt(userId) ? m.user2_id : m.user1_id);
     });
 
-    let browseList = allUsers.map(user => ({
+    let browseList = (allUsers || []).map(user => ({
       ...user,
       relationship_types: parseRelationshipTypes(user.relationship_types),
       is_liked: likedUserIds.has(user.id),
       is_matched: matchedUserIds.has(user.id)
     }));
 
+    // 精准匹配筛选
     if (type) {
       const counterpart = COUNTERPART_MAP[type];
       if (!counterpart) {
@@ -175,8 +224,8 @@ app.get('/api/browse/:userId', (req, res) => {
       );
 
       if (gender) browseList = browseList.filter(u => u.gender === gender);
-      if (age_min) { const min = parseInt(age_min); if (!isNaN(min)) browseList = browseList.filter(u => u.age >= min); }
-      if (age_max) { const max = parseInt(age_max); if (!isNaN(max)) browseList = browseList.filter(u => u.age <= max); }
+      if (age_min) browseList = browseList.filter(u => u.age >= parseInt(age_min));
+      if (age_max) browseList = browseList.filter(u => u.age <= parseInt(age_max));
 
       browseList = browseList.map(user => ({
         ...user, overlap_types: [type], overlap_count: 1,
@@ -200,79 +249,113 @@ app.get('/api/browse/:userId', (req, res) => {
 /**
  * POST /api/like
  * 点赞 → 双向匹配检测 → 匹配成功后自动删除两人数据
- * 
- * 权限控制：必须提供正确的 from_user_id + token 才能操作
- * 其他人不可替别人点赞或修改他人的信息
  */
-app.post('/api/like', (req, res) => {
+app.post('/api/like', async (req, res) => {
   try {
     const { from_user_id, to_user_id, token, relationship_type } = req.body;
 
-    // 🔒 身份验证：只有 token 持有者才能操作自己的数据
-    const currentUser = verifyUser(from_user_id, token);
+    const currentUser = await verifyUser(from_user_id, token);
     if (!currentUser) return res.status(401).json({ error: '身份验证失败，无权进行此操作' });
 
     if (from_user_id === to_user_id) return res.status(400).json({ error: '不能给自己点赞' });
 
     // 验证目标用户存在
-    const targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(to_user_id);
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', to_user_id)
+      .maybeSingle();
+
     if (!targetUser) return res.status(404).json({ error: '该用户已不存在' });
 
     // 不能重复点赞
-    const existingLike = db.prepare('SELECT id FROM likes WHERE from_user_id = ? AND to_user_id = ?').get(from_user_id, to_user_id);
+    const { data: existingLike } = await supabase
+      .from('likes')
+      .select('id')
+      .eq('from_user_id', from_user_id)
+      .eq('to_user_id', to_user_id)
+      .maybeSingle();
+
     if (existingLike) return res.status(400).json({ error: '已经表达过喜欢了' });
 
     // 记录点赞
-    db.prepare('INSERT INTO likes (from_user_id, to_user_id) VALUES (?, ?)').run(from_user_id, to_user_id);
+    await supabase
+      .from('likes')
+      .insert({ from_user_id: parseInt(from_user_id), to_user_id: parseInt(to_user_id) });
 
     // 检查是否双向匹配
-    const reverseLike = db.prepare('SELECT id FROM likes WHERE from_user_id = ? AND to_user_id = ?').get(to_user_id, from_user_id);
+    const { data: reverseLike } = await supabase
+      .from('likes')
+      .select('id')
+      .eq('from_user_id', to_user_id)
+      .eq('to_user_id', from_user_id)
+      .maybeSingle();
 
     let matched = false, matchId = null, targetWechatId = null, targetNickname = null;
 
     if (reverseLike) {
-      const [smaller, larger] = [Math.min(from_user_id, to_user_id), Math.max(from_user_id, to_user_id)];
-      const existingMatch = db.prepare('SELECT id FROM matches WHERE user1_id = ? AND user2_id = ?').get(smaller, larger);
+      const smaller = Math.min(from_user_id, to_user_id);
+      const larger = Math.max(from_user_id, to_user_id);
+
+      // 检查是否已有匹配记录
+      const { data: existingMatch } = await supabase
+        .from('matches')
+        .select('id')
+        .eq('user1_id', smaller)
+        .eq('user2_id', larger)
+        .maybeSingle();
+
       if (!existingMatch) {
-        matchId = db.prepare('INSERT INTO matches (user1_id, user2_id) VALUES (?, ?)').run(smaller, larger).lastInsertRowid;
+        const { data: newMatch, error: matchError } = await supabase
+          .from('matches')
+          .insert({ user1_id: smaller, user2_id: larger })
+          .select()
+          .single();
+        matchId = newMatch?.id;
       } else {
         matchId = existingMatch.id;
       }
 
-      const targetInfo = db.prepare('SELECT wechat_id, nickname FROM users WHERE id = ?').get(to_user_id);
-      targetWechatId = targetInfo.wechat_id;
-      targetNickname = targetInfo.nickname;
+      // 获取目标用户信息
+      const { data: targetInfo } = await supabase
+        .from('users')
+        .select('wechat_id, nickname')
+        .eq('id', to_user_id)
+        .maybeSingle();
 
-      // 🗑️ 匹配成功 → 将两人数据存入存档表，然后从活跃用户池删除
-      const user1 = db.prepare('SELECT * FROM users WHERE id = ?').get(from_user_id);
-      const user2 = db.prepare('SELECT * FROM users WHERE id = ?').get(to_user_id);
+      targetWechatId = targetInfo?.wechat_id;
+      targetNickname = targetInfo?.nickname;
+
+      // 匹配成功 → 存入存档，删除活跃用户
+      const { data: user1 } = await supabase.from('users').select('*').eq('id', from_user_id).maybeSingle();
+      const { data: user2 } = await supabase.from('users').select('*').eq('id', to_user_id).maybeSingle();
 
       if (user1 && user2) {
-        // 存入 matched_users 存档（单独信息库）
-        const insertSnapshot = db.prepare(`
-          INSERT INTO matched_users (original_user_id, match_id, snapshot) VALUES (?, ?, ?)
-        `);
         const snapshot1 = JSON.stringify({
           nickname: user1.nickname, age: user1.age, gender: user1.gender,
           region: user1.region, constellation: user1.constellation, mbti: user1.mbti,
-          orientation: user1.orientation, relationship_types: JSON.parse(user1.relationship_types),
+          orientation: user1.orientation, relationship_types: parseRelationshipTypes(user1.relationship_types),
           wechat_id: user1.wechat_id
         });
         const snapshot2 = JSON.stringify({
           nickname: user2.nickname, age: user2.age, gender: user2.gender,
           region: user2.region, constellation: user2.constellation, mbti: user2.mbti,
-          orientation: user2.orientation, relationship_types: JSON.parse(user2.relationship_types),
+          orientation: user2.orientation, relationship_types: parseRelationshipTypes(user2.relationship_types),
           wechat_id: user2.wechat_id
         });
-        insertSnapshot.run(user1.id, matchId, snapshot1);
-        insertSnapshot.run(user2.id, matchId, snapshot2);
 
-        // 删除相关联的点赞记录
-        db.prepare('DELETE FROM likes WHERE from_user_id IN (?, ?) OR to_user_id IN (?, ?)').run(from_user_id, to_user_id, from_user_id, to_user_id);
+        await supabase.from('matched_users').insert({ original_user_id: user1.id, match_id: matchId, snapshot: snapshot1 });
+        await supabase.from('matched_users').insert({ original_user_id: user2.id, match_id: matchId, snapshot: snapshot2 });
+
+        // 删除相关的点赞记录
+        await supabase.from('likes').delete().eq('from_user_id', from_user_id);
+        await supabase.from('likes').delete().eq('from_user_id', to_user_id);
+        await supabase.from('likes').delete().eq('to_user_id', from_user_id);
+        await supabase.from('likes').delete().eq('to_user_id', to_user_id);
 
         // 从活跃用户池删除两人
-        db.prepare('DELETE FROM users WHERE id = ?').run(from_user_id);
-        db.prepare('DELETE FROM users WHERE id = ?').run(to_user_id);
+        await supabase.from('users').delete().eq('id', from_user_id);
+        await supabase.from('users').delete().eq('id', to_user_id);
       }
 
       matched = true;
@@ -294,50 +377,59 @@ app.post('/api/like', (req, res) => {
 
 /**
  * GET /api/matches/:userId
- * 查询匹配列表 — 因为匹配后用户已从 users 表删除，从 matched_users 存档读取
  */
-app.get('/api/matches/:userId', (req, res) => {
+app.get('/api/matches/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { token } = req.query;
 
-    // 🔒 验证：先查活跃用户，再查存档
-    let currentUser = verifyUser(userId, token);
-    if (!currentUser) {
-      // 用户可能已匹配被删除，从存档中验证
-      const archived = db.prepare('SELECT snapshot FROM matched_users WHERE original_user_id = ?').get(userId);
-      if (!archived) return res.status(401).json({ error: '身份验证失败' });
+    let currentUser = await verifyUser(userId, token);
+    let userExists = !!currentUser;
 
-      // 从存档的 snapshot 中提取 token 验证
-      try {
-        const snap = JSON.parse(archived.snapshot);
-        // 存档用户通过 snapshot 中的 wechat_id 间接验证
-        // 加载匹配数据时允许查看（因为用户已匹配成功）
-        currentUser = { id: parseInt(userId) };
-      } catch { return res.status(401).json({ error: '身份验证失败' }); }
+    // 如果从活跃用户找不到，查存档
+    if (!currentUser) {
+      const { data: archived } = await supabase
+        .from('matched_users')
+        .select('snapshot')
+        .eq('original_user_id', userId)
+        .maybeSingle();
+
+      if (!archived) return res.status(401).json({ error: '身份验证失败' });
+      currentUser = { id: parseInt(userId) };
+      userExists = false;
     }
 
-    // 从 matches 表获取匹配记录
-    const matches = db.prepare(`
-      SELECT id as match_id, user1_id, user2_id, matched_at
-      FROM matches WHERE user1_id = ? OR user2_id = ?
-      ORDER BY matched_at DESC
-    `).all(userId, userId);
+    const { data: matches, error } = await supabase
+      .from('matches')
+      .select('id, user1_id, user2_id, matched_at')
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+      .order('matched_at', { ascending: false });
+
+    if (error) {
+      console.error('匹配列表 DB 错误:', error);
+      return res.status(500).json({ error: '服务器错误' });
+    }
 
     const matchDetails = [];
 
-    for (const m of matches) {
+    for (const m of (matches || [])) {
       const partnerId = m.user1_id === parseInt(userId) ? m.user2_id : m.user1_id;
 
-      // 先查活跃 users 表，再查 matched_users 存档
-      let partner = db.prepare(`
-        SELECT id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id
-        FROM users WHERE id = ?
-      `).get(partnerId);
+      // 先查活跃 users 表
+      let { data: partner } = await supabase
+        .from('users')
+        .select('id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id')
+        .eq('id', partnerId)
+        .maybeSingle();
 
       if (!partner) {
-        // 从存档中读取
-        const archivedPartner = db.prepare('SELECT snapshot FROM matched_users WHERE original_user_id = ?').get(partnerId);
+        // 从存档读取
+        const { data: archivedPartner } = await supabase
+          .from('matched_users')
+          .select('snapshot')
+          .eq('original_user_id', partnerId)
+          .maybeSingle();
+
         if (archivedPartner) {
           const snap = JSON.parse(archivedPartner.snapshot);
           partner = { id: partnerId, ...snap, relationship_types: snap.relationship_types || [] };
@@ -348,7 +440,7 @@ app.get('/api/matches/:userId', (req, res) => {
 
       if (partner) {
         matchDetails.push({
-          match_id: m.match_id,
+          match_id: m.id,
           matched_at: m.matched_at,
           partner
         });
@@ -364,17 +456,22 @@ app.get('/api/matches/:userId', (req, res) => {
 
 /**
  * GET /api/profile/:userId
- * 🔒 只有 token 持有者才能查看自己的完整资料
  */
-app.get('/api/profile/:userId', (req, res) => {
+app.get('/api/profile/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { token } = req.query;
 
-    const user = verifyUser(userId, token);
+    const user = await verifyUser(userId, token);
+
     if (!user) {
       // 检查存档
-      const archived = db.prepare('SELECT snapshot FROM matched_users WHERE original_user_id = ?').get(userId);
+      const { data: archived } = await supabase
+        .from('matched_users')
+        .select('snapshot')
+        .eq('original_user_id', userId)
+        .maybeSingle();
+
       if (archived) {
         const snap = JSON.parse(archived.snapshot);
         return res.json({
@@ -389,12 +486,19 @@ app.get('/api/profile/:userId', (req, res) => {
 
     user.relationship_types = parseRelationshipTypes(user.relationship_types);
 
-    const likeCount = db.prepare('SELECT COUNT(*) as count FROM likes WHERE to_user_id = ?').get(userId);
-    const matchCount = db.prepare('SELECT COUNT(*) as count FROM matches WHERE user1_id = ? OR user2_id = ?').get(userId, userId);
+    const { count: likeCount } = await supabase
+      .from('likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('to_user_id', userId);
+
+    const { count: matchCount } = await supabase
+      .from('matches')
+      .select('*', { count: 'exact', head: true })
+      .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
 
     res.json({
       success: true, user,
-      stats: { likes_received: likeCount.count, match_count: matchCount.count }
+      stats: { likes_received: likeCount || 0, match_count: matchCount || 0 }
     });
   } catch (err) {
     console.error(err);
@@ -404,17 +508,20 @@ app.get('/api/profile/:userId', (req, res) => {
 
 /**
  * GET /api/my-likes/:userId
- * 🔒 仅自己能查看自己的点赞列表
  */
-app.get('/api/my-likes/:userId', (req, res) => {
+app.get('/api/my-likes/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { token } = req.query;
-    const currentUser = verifyUser(userId, token);
+    const currentUser = await verifyUser(userId, token);
     if (!currentUser) return res.status(401).json({ error: '身份验证失败' });
 
-    const likes = db.prepare('SELECT to_user_id FROM likes WHERE from_user_id = ?').all(userId);
-    res.json({ success: true, liked_user_ids: likes.map(l => l.to_user_id) });
+    const { data: likes } = await supabase
+      .from('likes')
+      .select('to_user_id')
+      .eq('from_user_id', userId);
+
+    res.json({ success: true, liked_user_ids: (likes || []).map(l => l.to_user_id) });
   } catch (err) {
     res.status(500).json({ error: '服务器错误' });
   }
@@ -442,22 +549,14 @@ app.get('/api/counterpart-info/:type', (req, res) => {
   });
 });
 
-// 🔒 禁止直接删除或修改他人数据 — 没有提供删除/修改 API
-// 所有写操作必须通过 userId + token 验证
-// 用户数据仅在双向匹配成功后由系统自动清理
-
 // ========== 🔑 管理员接口 ==========
-const ADMIN_PASSWORD = '789wwpvvw';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '789wwpvvw';
 
 function verifyAdmin(token) {
   if (!token) return false;
   return token === ADMIN_PASSWORD + '_admin_session';
 }
 
-/**
- * POST /api/admin/login
- * 管理员密码验证
- */
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   if (password === ADMIN_PASSWORD) {
@@ -468,31 +567,31 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
-/**
- * GET /api/admin/users
- * 查看所有活跃用户（完整信息包括微信号）
- */
-app.get('/api/admin/users', (req, res) => {
+app.get('/api/admin/users', async (req, res) => {
   if (!verifyAdmin(req.query.token)) return res.status(401).json({ error: '管理员验证失败' });
-  const users = db.prepare(`
-    SELECT id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id, created_at
-    FROM users ORDER BY created_at DESC
-  `).all();
-  const parsed = users.map(u => ({ ...u, relationship_types: parseRelationshipTypes(u.relationship_types) }));
+
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id, created_at')
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: '服务器错误' });
+
+  const parsed = (users || []).map(u => ({ ...u, relationship_types: parseRelationshipTypes(u.relationship_types) }));
   res.json({ success: true, users: parsed, count: parsed.length });
 });
 
-/**
- * GET /api/admin/archived
- * 查看已匹配存档的用户
- */
-app.get('/api/admin/archived', (req, res) => {
+app.get('/api/admin/archived', async (req, res) => {
   if (!verifyAdmin(req.query.token)) return res.status(401).json({ error: '管理员验证失败' });
-  const archived = db.prepare(`
-    SELECT id, original_user_id, match_id, snapshot, matched_at
-    FROM matched_users ORDER BY matched_at DESC
-  `).all();
-  const parsed = archived.map(a => {
+
+  const { data: archived, error } = await supabase
+    .from('matched_users')
+    .select('id, original_user_id, match_id, snapshot, matched_at')
+    .order('matched_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: '服务器错误' });
+
+  const parsed = (archived || []).map(a => {
     let snap = {};
     try { snap = JSON.parse(a.snapshot); } catch {}
     return { ...a, snapshot: snap };
@@ -500,115 +599,111 @@ app.get('/api/admin/archived', (req, res) => {
   res.json({ success: true, archived: parsed, count: parsed.length });
 });
 
-/**
- * GET /api/admin/matches
- * 查看所有匹配记录
- */
-app.get('/api/admin/matches', (req, res) => {
+app.get('/api/admin/matches', async (req, res) => {
   if (!verifyAdmin(req.query.token)) return res.status(401).json({ error: '管理员验证失败' });
-  const matches = db.prepare(`
-    SELECT id, user1_id, user2_id, matched_at FROM matches ORDER BY matched_at DESC
-  `).all();
-  const detailed = matches.map(m => {
-    const u1Archived = db.prepare('SELECT snapshot FROM matched_users WHERE match_id = ? AND original_user_id = ?').get(m.id, m.user1_id);
-    const u2Archived = db.prepare('SELECT snapshot FROM matched_users WHERE match_id = ? AND original_user_id = ?').get(m.id, m.user2_id);
+
+  const { data: matches, error } = await supabase
+    .from('matches')
+    .select('id, user1_id, user2_id, matched_at')
+    .order('matched_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: '服务器错误' });
+
+  const detailed = [];
+  for (const m of (matches || [])) {
+    const { data: u1Archived } = await supabase
+      .from('matched_users')
+      .select('snapshot')
+      .eq('match_id', m.id)
+      .eq('original_user_id', m.user1_id)
+      .maybeSingle();
+    const { data: u2Archived } = await supabase
+      .from('matched_users')
+      .select('snapshot')
+      .eq('match_id', m.id)
+      .eq('original_user_id', m.user2_id)
+      .maybeSingle();
+
     let u1 = null, u2 = null;
     if (u1Archived) { try { u1 = JSON.parse(u1Archived.snapshot); } catch {} }
     if (u2Archived) { try { u2 = JSON.parse(u2Archived.snapshot); } catch {} }
-    return { ...m, user1: u1, user2: u2 };
-  });
+    detailed.push({ ...m, user1: u1, user2: u2 });
+  }
+
   res.json({ success: true, matches: detailed, count: detailed.length });
 });
 
-/**
- * PUT /api/admin/user/:id
- * 管理员修改任意用户信息
- */
-app.put('/api/admin/user/:id', (req, res) => {
+app.put('/api/admin/user/:id', async (req, res) => {
   if (!verifyAdmin(req.body.token)) return res.status(401).json({ error: '管理员验证失败' });
 
   const { id } = req.params;
   const { nickname, age, gender, region, constellation, mbti, orientation, relationship_types, wechat_id } = req.body;
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const { data: user, error: findError } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
   if (!user) return res.status(404).json({ error: '用户不存在' });
 
-  const updateNickname = nickname !== undefined ? nickname : user.nickname;
-  const updateAge = age !== undefined ? age : user.age;
-  const updateGender = gender !== undefined ? gender : user.gender;
-  const updateRegion = region !== undefined ? region : user.region;
-  const updateConstellation = constellation !== undefined ? constellation : user.constellation;
-  const updateMbti = mbti !== undefined ? mbti : user.mbti;
-  const updateOrientation = orientation !== undefined ? orientation : user.orientation;
-  const updateTypes = relationship_types !== undefined ? JSON.stringify(relationship_types) : user.relationship_types;
-  const updateWechat = wechat_id !== undefined ? wechat_id : user.wechat_id;
+  const updateData = {};
+  if (nickname !== undefined) updateData.nickname = nickname;
+  if (age !== undefined) updateData.age = parseInt(age);
+  if (gender !== undefined) updateData.gender = gender;
+  if (region !== undefined) updateData.region = region;
+  if (constellation !== undefined) updateData.constellation = constellation;
+  if (mbti !== undefined) updateData.mbti = mbti;
+  if (orientation !== undefined) updateData.orientation = orientation;
+  if (relationship_types !== undefined) updateData.relationship_types = JSON.stringify(relationship_types);
+  if (wechat_id !== undefined) updateData.wechat_id = wechat_id;
 
-  db.prepare(`
-    UPDATE users SET nickname=?, age=?, gender=?, region=?, constellation=?, mbti=?, orientation=?, relationship_types=?, wechat_id=?
-    WHERE id=?
-  `).run(updateNickname, updateAge, updateGender, updateRegion, updateConstellation, updateMbti, updateOrientation, updateTypes, updateWechat, id);
+  const { error } = await supabase
+    .from('users')
+    .update(updateData)
+    .eq('id', id);
+
+  if (error) return res.status(500).json({ error: '更新失败' });
 
   res.json({ success: true, message: '用户信息已更新' });
 });
 
-/**
- * DELETE /api/admin/user/:id
- * 管理员删除用户
- */
-app.delete('/api/admin/user/:id', (req, res) => {
+app.delete('/api/admin/user/:id', async (req, res) => {
   const { token } = req.body;
   if (!verifyAdmin(token)) return res.status(401).json({ error: '管理员验证失败' });
 
   const { id } = req.params;
-  db.prepare('DELETE FROM likes WHERE from_user_id = ? OR to_user_id = ?').run(id, id);
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  await supabase.from('likes').delete().eq('from_user_id', id);
+  await supabase.from('likes').delete().eq('to_user_id', id);
+  await supabase.from('users').delete().eq('id', id);
   res.json({ success: true, message: '用户已删除' });
 });
 
+// SPA 回退
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ========== 全局错误处理 — 防止进程崩溃 ==========
-process.on('uncaughtException', (err) => {
-  console.error('❌ 未捕获异常:', err.message);
-  console.error(err.stack);
-  // 不退出进程，记录后继续运行
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ 未处理的 Promise 拒绝:', reason);
-  // 不退出进程
-});
-
-// ========== 优雅关闭 ==========
-process.on('SIGINT', () => {
-  console.log('\n🛑 正在关闭服务...');
-  if (db) db.close();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('\n🛑 收到 SIGTERM，关闭服务...');
-  if (db) db.close();
-  process.exit(0);
-});
-
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n╔══════════════════════════════════════════╗
-║   💕 寻星 v8 — 暗黑高级版                ║
-║   🌐 CORS 已开启（支持远程前端）         ║
+// ========== 本地开发用：启动 HTTP 服务 ==========
+if (require.main === module) {
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n╔══════════════════════════════════════════╗
+║   💫 寻星 v9 — Supabase 版                ║
+║   🌐 数据库: Supabase PostgreSQL           ║
 ║   🔒 权限控制 + 自动清理                ║
 ║   🔑 管理员入口: /admin.html            ║
 ║   地址: http://localhost:${PORT}              ║
 ╚══════════════════════════════════════════╝`);
-});
+  });
 
-// 服务器错误处理
-server.on('error', (err) => {
-  console.error('❌ 服务器启动失败:', err.message);
-  if (err.code === 'EADDRINUSE') {
-    console.error(`   端口 ${PORT} 已被占用，请先关闭占用进程或更换端口`);
-  }
-  process.exit(1);
-});
+  server.on('error', (err) => {
+    console.error('❌ 服务器启动失败:', err.message);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`   端口 ${PORT} 已被占用`);
+    }
+    process.exit(1);
+  });
+}
+
+// ========== Vercel 部署用：导出 app ==========
+module.exports = app;
