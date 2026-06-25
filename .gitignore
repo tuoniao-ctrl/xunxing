@@ -3,6 +3,7 @@ node_modules/
 logs/
 *.log
 .DS_Store
-database/match.db
+database/*.db
 database/backups/
-.DS_Store
+release.json
+npm-debug.log*
