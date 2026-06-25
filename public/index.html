@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>寻星</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- 背景粒子 -->
+  <canvas id="bgCanvas"></canvas>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- 关系类型选择弹窗 -->
+  <div class="modal-overlay" id="typeModal" style="display:none;">
+    <div class="modal-content step-modal">
+      <div class="step-indicator">
+        <div class="step-dot active">1</div>
+        <div class="step-line active"></div>
+        <div class="step-dot">2</div>
+      </div>
+      <h2 class="step-title">你想先找哪种关系？</h2>
+      <p class="step-subtitle">请选择一种关系类型，系统会针对匹配</p>
+      <div class="step-options" id="typeOptions"></div>
+      <p class="step-hint">💡 你选了多种关系类型，可以先匹配一种，之后可以切换</p>
+    </div>
+  </div>
+
+  <!-- 筛选弹窗 -->
+  <div class="modal-overlay" id="filterModal" style="display:none;">
+    <div class="modal-content step-modal">
+      <div class="step-indicator">
+        <div class="step-dot done">✓</div>
+        <div class="step-line active"></div>
+        <div class="step-dot active">2</div>
+      </div>
+      <h2 class="step-title" id="filterModalTitle">你希望对方的条件</h2>
+      <p class="step-subtitle" id="filterModalSubtitle"></p>
+      <div class="filter-section">
+        <label class="filter-label">对方性别</label>
+        <div class="option-group" id="filterGender">
+          <button class="option-btn" data-value="男" onclick="selectFilterOption(this, 'filterGender')">♂ 男</button>
+          <button class="option-btn" data-value="女" onclick="selectFilterOption(this, 'filterGender')">♀ 女</button>
+        </div>
+      </div>
+      <div class="filter-section">
+        <label class="filter-label">对方年龄区间</label>
+        <div class="age-range-row">
+          <input type="number" class="age-input" id="ageMin" placeholder="最小" min="1" max="120" inputmode="numeric" value="18">
+          <span class="age-separator">~</span>
+          <input type="number" class="age-input" id="ageMax" placeholder="最大" min="1" max="120" inputmode="numeric" value="99">
+          <span class="age-unit">岁</span>
+        </div>
+      </div>
+      <div class="step-actions">
+        <button class="btn btn-outline" onclick="skipFilter()">不限条件</button>
+        <button class="btn btn-primary btn-glow" onclick="applyFilter()">🔍 开始匹配</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🔒 确认建立关系弹窗 -->
+  <div class="modal-overlay" id="confirmModal" style="display:none;">
+    <div class="modal-content confirm-modal">
+      <div class="confirm-icon">💗</div>
+      <h2 class="confirm-title">确认建立关系</h2>
+      <p class="confirm-text" id="confirmText"></p>
+      <div class="confirm-notice">⚠️ 匹配成功后，双方数据将从信息库中移除</div>
+      <div class="confirm-actions">
+        <button class="btn btn-outline" onclick="cancelConfirm()">取消</button>
+        <button class="btn btn-primary btn-glow" id="confirmBtn" onclick="doConfirmLike()">💗 确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 匹配成功小卡片 -->
+  <div class="modal-overlay" id="matchModal" style="display:none;">
+    <div class="modal-content match-card-modal">
+      <div class="match-card-sparkle">✨</div>
+      <h2 class="match-card-title">🎉 恭喜你找到心仪关系</h2>
+      <div class="match-card-body">
+        <div class="match-card-row">
+          <span class="match-card-label">对方昵称</span>
+          <span class="match-card-value" id="matchCardNickname">—</span>
+        </div>
+        <div class="match-card-row">
+          <span class="match-card-label">对方微信号</span>
+          <span class="match-card-value wechat-value" id="matchCardWechat">—</span>
+        </div>
+      </div>
+      <button class="btn btn-copy-sm match-card-copy-btn" onclick="copyWechatId()">📋 复制微信号</button>
+      <div class="match-card-notice">
+        <p class="match-card-notice-title">🦉 鸵鸟提示您：</p>
+        <p>网恋需谨慎，见面要注意。<br>本网站只负责匹配，不包售后。</p>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="closeMatchModal()">我知道了</button>
+    </div>
+  </div>
+
+  <!-- 主容器 -->
+  <div class="app-container">
+    <a href="/admin.html" class="admin-link" title="管理员入口">⚙</a>
+    <header class="app-header">
+      <div class="header-logo">
+        <span class="logo-icon">💕</span>
+        <span class="logo-text">寻星</span>
+      </div>
+      <p class="header-subtitle">程序制作人：鸵鸟</p>
+    </header>
+
+    <!-- Tab 切换 -->
+    <div class="tab-bar" id="tabBar" style="display:none;">
+      <button class="tab-btn active" data-tab="browse" onclick="switchTab('browse')">
+        <span class="tab-icon">🔍</span><span class="tab-label">发现</span>
+      </button>
+      <button class="tab-btn" data-tab="matches" onclick="switchTab('matches')">
+        <span class="tab-icon">💌</span><span class="tab-label">匹配</span>
+      </button>
+      <button class="tab-btn" data-tab="profile" onclick="switchTab('profile')">
+        <span class="tab-icon">👤</span><span class="tab-label">我的</span>
+      </button>
+    </div>
+
+    <!-- 注册/登录 -->
+    <div class="page" id="page-auth">
+      <div class="auth-tabs">
+        <button class="auth-tab active" onclick="switchAuthTab('register')">📝 新用户注册</button>
+        <button class="auth-tab" onclick="switchAuthTab('login')">🔑 已有账号登录</button>
+      </div>
+
+      <!-- 注册表单 -->
+      <div class="auth-form" id="form-register">
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">💬</span> 昵称</label>
+          <input type="text" class="form-input" id="regNickname" placeholder="你的昵称" maxlength="20">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">🎂</span> 年龄</label>
+          <input type="number" class="form-input" id="regAge" placeholder="请输入年龄" min="1" max="120" inputmode="numeric">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">👤</span> 性别</label>
+          <div class="option-group" id="regGender">
+            <button class="option-btn" data-value="男" onclick="selectOption(this, 'regGender')">♂ 男</button>
+            <button class="option-btn" data-value="女" onclick="selectOption(this, 'regGender')">♀ 女</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">📍</span> 地区</label>
+          <input type="text" class="form-input" id="regRegion" placeholder="例如：广东深圳 / 北京 / 上海" maxlength="30">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label"><span class="label-icon">✨</span> 星座</label>
+            <select class="form-input form-select" id="regConstellation">
+              <option value="">请选择</option>
+              <option value="白羊座">♈ 白羊座</option>
+              <option value="金牛座">♉ 金牛座</option>
+              <option value="双子座">♊ 双子座</option>
+              <option value="巨蟹座">♋ 巨蟹座</option>
+              <option value="狮子座">♌ 狮子座</option>
+              <option value="处女座">♍ 处女座</option>
+              <option value="天秤座">♎ 天秤座</option>
+              <option value="天蝎座">♏ 天蝎座</option>
+              <option value="射手座">♐ 射手座</option>
+              <option value="摩羯座">♑ 摩羯座</option>
+              <option value="水瓶座">♒ 水瓶座</option>
+              <option value="双鱼座">♓ 双鱼座</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label"><span class="label-icon">🧠</span> MBTI</label>
+            <select class="form-input form-select" id="regMbti">
+              <option value="">请选择</option>
+              <option>INTJ</option><option>INTP</option><option>ENTJ</option><option>ENTP</option>
+              <option>INFJ</option><option>INFP</option><option>ENFJ</option><option>ENFP</option>
+              <option>ISTJ</option><option>ISFJ</option><option>ESTJ</option><option>ESFJ</option>
+              <option>ISTP</option><option>ISFP</option><option>ESTP</option><option>ESFP</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">💝</span> 性取向</label>
+          <div class="option-group" id="regOrientation">
+            <button class="option-btn" data-value="男" onclick="selectOption(this, 'regOrientation')">喜欢男生</button>
+            <button class="option-btn" data-value="女" onclick="selectOption(this, 'regOrientation')">喜欢女生</button>
+            <button class="option-btn" data-value="双性" onclick="selectOption(this, 'regOrientation')">双性恋</button>
+            <button class="option-btn" data-value="泛性" onclick="selectOption(this, 'regOrientation')">泛性恋</button>
+            <button class="option-btn" data-value="无性" onclick="selectOption(this, 'regOrientation')">无性恋</button>
+            <button class="option-btn" data-value="其他" onclick="selectOption(this, 'regOrientation')">其他</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">🎯</span> 想找的关系（多选）</label>
+          <div class="option-group multi" id="regRelationship">
+            <button class="option-btn multi-btn" data-value="固玩" onclick="toggleMultiOption(this, 'regRelationship')"><span class="multi-check"></span> A. 固玩</button>
+            <button class="option-btn multi-btn" data-value="监护" onclick="toggleMultiOption(this, 'regRelationship')"><span class="multi-check"></span> B. 监护</button>
+            <button class="option-btn multi-btn" data-value="崽崽" onclick="toggleMultiOption(this, 'regRelationship')"><span class="multi-check"></span> C. 崽崽</button>
+            <button class="option-btn multi-btn" data-value="对象" onclick="toggleMultiOption(this, 'regRelationship')"><span class="multi-check"></span> D. 对象</button>
+          </div>
+          <div class="form-hint">可选择多个关系类型，系统会帮你逐项匹配</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">💬</span> 微信号</label>
+          <input type="text" class="form-input" id="regWechat" placeholder="请输入你的微信号" maxlength="30">
+          <div class="form-hint">🔒 仅在匹配成功后向对方显示</div>
+        </div>
+
+        <button class="btn btn-primary btn-full btn-glow" onclick="handleRegister()">
+          ✨ 立即注册，开启缘分
+        </button>
+      </div>
+
+      <!-- 登录表单 -->
+      <div class="auth-form" id="form-login" style="display:none;">
+        <div class="form-group">
+          <label class="form-label"><span class="label-icon">💬</span> 微信号</label>
+          <input type="text" class="form-input" id="loginWechat" placeholder="请输入注册时使用的微信号" maxlength="30">
+        </div>
+        <div class="form-hint" style="text-align:center;margin-bottom:20px;">
+          输入你注册时填写的微信号即可登录查看匹配
+        </div>
+        <button class="btn btn-primary btn-full btn-glow" onclick="handleLogin()">🔑 登录查看匹配</button>
+      </div>
+    </div>
+
+    <!-- 发现页 -->
+    <div class="page" id="page-browse" style="display:none;">
+      <div class="filter-bar" id="filterBar">
+        <div class="filter-current">
+          <span class="filter-current-icon">🎯</span>
+          <span class="filter-current-text" id="filterCurrentText">选择关系类型开始匹配</span>
+        </div>
+        <div class="filter-switcher" id="filterSwitcher"></div>
+      </div>
+      <div class="filter-conditions" id="filterConditions" style="display:none;">
+        <span class="filter-chip" id="chipGender"></span>
+        <span class="filter-chip" id="chipAge"></span>
+        <button class="filter-change-btn" onclick="showFilterModal()">✏️ 修改</button>
+      </div>
+      <div class="browse-list" id="browseList">
+        <div class="empty-state" id="browseEmpty">
+          <div class="empty-icon">🔍</div>
+          <p class="empty-text">请先选择关系类型</p>
+          <p class="empty-hint">在上方选择你想找的关系类型，系统为你精准匹配</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 匹配页 -->
+    <div class="page" id="page-matches" style="display:none;">
+      <div class="browse-header">
+        <h2 class="browse-title">💌 我的匹配</h2>
+        <p class="browse-subtitle">这里显示所有与你双向匹配的用户</p>
+      </div>
+      <div class="browse-list" id="matchesList">
+        <div class="empty-state" id="matchesEmpty">
+          <div class="empty-icon">💝</div>
+          <p class="empty-text">还没有匹配</p>
+          <p class="empty-hint">去发现页面找到感兴趣的人，互相喜欢就能匹配！</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 个人页 -->
+    <div class="page" id="page-profile" style="display:none;">
+      <div class="profile-card">
+        <div class="profile-avatar">👤</div>
+        <div class="profile-info" id="profileInfo"></div>
+      </div>
+      <div class="profile-stats" id="profileStats"></div>
+      <button class="btn btn-outline btn-full" onclick="handleLogout()" style="margin-top:20px;">🚪 退出登录</button>
+    </div>
+  </div>
+
+  <!-- 🔧 后端连接设置（仅 CloudStudio 部署时显示） -->
+  <div class="backend-settings" id="backendSettings" style="display:none;">
+    <div class="settings-toggle" id="settingsToggle" title="后端连接设置">⚙️</div>
+    <div class="settings-panel" id="settingsPanel" style="display:none;">
+      <div class="settings-header">
+        <span>🔗 后端连接</span>
+        <span class="settings-close" id="settingsClose">✕</span>
+      </div>
+      <div class="settings-body">
+        <div class="conn-status" id="connStatus">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">检测中...</span>
+        </div>
+        <input type="url" class="settings-input" id="backendUrlInput"
+               placeholder="https://xxx.lhr.life" />
+        <button class="btn btn-primary btn-sm" onclick="updateBackendUrl()">💾 保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

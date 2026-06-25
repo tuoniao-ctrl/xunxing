@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>寻星 — 管理员控制台</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0a0a0a;
+      --bg-card: #1a1a1a;
+      --bg-elevated: #222;
+      --border: #2a2a2a;
+      --primary: #d4a574;
+      --accent: #e8c97a;
+      --success: #4ade80;
+      --danger: #ef4444;
+      --warning: #fbbf24;
+      --text: #f5f5f5;
+      --text-secondary: #a0a0a0;
+      --text-muted: #666;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, rgba(212,167,116,0.05) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Login */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      background: var(--bg);
+    }
+    .login-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 40px 32px;
+      width: 360px;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(212,167,116,0.05);
+    }
+    .login-icon { font-size: 48px; margin-bottom: 12px; }
+    .login-card h1 {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 4px;
+    }
+    .login-card .sub { font-size: 12px; color: var(--text-muted); margin-bottom: 24px; }
+    .login-card input {
+      width: 100%;
+      padding: 14px 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: var(--text);
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      text-align: center;
+      letter-spacing: 4px;
+    }
+    .login-card input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(212,167,116,0.1);
+    }
+    .login-card .btn {
+      width: 100%;
+      margin-top: 14px;
+      padding: 14px;
+      background: linear-gradient(135deg, #b8956a, var(--primary));
+      color: var(--bg);
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 0 20px rgba(212,167,116,0.15);
+    }
+    .login-card .btn:hover { transform: translateY(-1px); box-shadow: 0 0 30px rgba(212,167,116,0.25); }
+    .login-err { color: var(--danger); font-size: 13px; margin-top: 10px; display: none; }
+
+    /* Main */
+    .app { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 20px; display: none; }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      margin-bottom: 20px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .header-icon { font-size: 28px; }
+    .header-title { font-size: 18px; font-weight: 700; color: var(--primary); }
+    .header-badge {
+      font-size: 11px;
+      padding: 4px 10px;
+      background: rgba(212,167,116,0.1);
+      border: 1px solid rgba(212,167,116,0.2);
+      border-radius: 20px;
+      color: var(--primary);
+    }
+    .header-actions { display: flex; gap: 10px; align-items: center; }
+    .btn-sm {
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .btn-sm:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-sm.active { background: rgba(212,167,116,0.1); border-color: var(--primary); color: var(--primary); }
+    .btn-sm.danger { border-color: rgba(239,68,68,0.3); color: var(--danger); }
+    .btn-sm.danger:hover { background: rgba(239,68,68,0.1); border-color: var(--danger); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tab {
+      padding: 10px 24px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { background: rgba(212,167,116,0.08); border-color: var(--primary); color: var(--primary); }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 16px;
+    }
+    .stat-value { font-size: 28px; font-weight: 800; color: var(--primary); }
+    .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--border); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      padding: 12px 14px;
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      white-space: nowrap;
+    }
+    tr:hover td { background: rgba(212,167,116,0.03); }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      background: rgba(212,167,116,0.08);
+      color: var(--primary);
+      margin: 1px 2px;
+    }
+    .action-btn {
+      padding: 5px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--primary);
+      font-size: 11px;
+      cursor: pointer;
+      margin: 1px 2px;
+      transition: all 0.2s;
+    }
+    .action-btn:hover { background: rgba(212,167,116,0.1); }
+    .action-btn.danger { color: var(--danger); border-color: rgba(239,68,68,0.3); }
+    .action-btn.danger:hover { background: rgba(239,68,68,0.1); }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 24px;
+      font-size: 14px;
+      color: var(--text);
+      z-index: 999;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    .toast.success { border-color: var(--success); color: var(--success); }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px 24px;
+      width: 420px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .modal h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      color: var(--primary);
+    }
+    .modal .form-group { margin-bottom: 14px; }
+    .modal label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 5px;
+    }
+    .modal input, .modal select {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
+    .modal input:focus, .modal select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(212,167,116,0.1);
+    }
+    .modal .btn-row { display: flex; gap: 10px; margin-top: 20px; }
+    .modal .btn-primary {
+      flex: 1;
+      padding: 12px;
+      background: linear-gradient(135deg, #b8956a, var(--primary));
+      color: var(--bg);
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .modal .btn-cancel {
+      flex: 1;
+      padding: 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .empty { text-align: center; padding: 40px; color: var(--text-muted); }
+    .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+    .wechat-cell { color: var(--success); font-weight: 600; letter-spacing: 1px; }
+
+    /* ========== 🔧 后端连接设置面板 ========== */
+    .backend-settings { position: fixed; bottom: 24px; right: 16px; z-index: 9999; }
+    .settings-toggle {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--bg-card); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      transition: transform 0.2s;
+    }
+    .settings-toggle:hover { transform: scale(1.1); border-color: var(--primary); }
+    .settings-panel {
+      position: absolute; bottom: 50px; right: 0;
+      width: 280px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 12px;
+      overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .settings-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 14px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600;
+    }
+    .settings-close { cursor: pointer; color: var(--text-muted); font-size: 16px; }
+    .settings-close:hover { color: var(--danger); }
+    .settings-body { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .conn-status { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: #666;
+    }
+    .status-dot.online { background: var(--success); box-shadow: 0 0 8px rgba(74,222,128,0.5); }
+    .status-dot.offline { background: var(--danger); box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+    .settings-input {
+      width: 100%; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); font-size: 12px; font-family: monospace;
+      outline: none; transition: border-color 0.2s;
+    }
+    .settings-input:focus { border-color: var(--primary); }
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <div class="login-icon">🔐</div>
+    <h1>寻星 · 管理控制台</h1>
+    <p class="sub">请输入管理员密码</p>
+    <input type="password" id="adminPassword" placeholder="管理员密码" onkeydown="if(event.key==='Enter')adminLogin()">
+    <button class="btn" onclick="adminLogin()">进入后台</button>
+    <p class="login-err" id="loginErr">密码错误，请重试</p>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="app" id="appMain">
+  <div class="header">
+    <div class="header-left">
+      <span class="header-icon">⚙️</span>
+      <span class="header-title">寻星 · 管理员控制台</span>
+      <span class="header-badge">ADMIN</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn-sm" onclick="refreshData()">🔄 刷新</button>
+      <button class="btn-sm danger" onclick="adminLogout()">退出</button>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="users" onclick="switchAdminTab('users')">👥 活跃用户</button>
+    <button class="tab" data-tab="archived" onclick="switchAdminTab('archived')">📦 已匹配存档</button>
+    <button class="tab" data-tab="matches" onclick="switchAdminTab('matches')">💕 配对记录</button>
+  </div>
+
+  <div class="stats" id="statsRow"></div>
+
+  <div class="table-wrap" id="tableContainer">
+    <div class="loading">加载中...</div>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <h3>✏️ 编辑用户信息</h3>
+    <div id="editForm"></div>
+    <div class="btn-row">
+      <button class="btn-cancel" onclick="closeEditModal()">取消</button>
+      <button class="btn-primary" onclick="saveEdit()">💾 保存修改</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 🔧 后端连接设置 -->
+<div class="backend-settings" id="backendSettings" style="display:none;">
+  <div class="settings-toggle" id="settingsToggle" title="后端连接设置">⚙️</div>
+  <div class="settings-panel" id="settingsPanel" style="display:none;">
+    <div class="settings-header">
+      <span>🔗 后端连接</span>
+      <span class="settings-close" id="settingsClose">✕</span>
+    </div>
+    <div class="settings-body">
+      <div class="conn-status" id="connStatus">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">检测中...</span>
+      </div>
+      <input type="url" class="settings-input" id="backendUrlInput"
+             placeholder="https://xxx.lhr.life" />
+      <button class="btn btn-primary" style="padding:8px 14px;font-size:12px;" onclick="updateBackendUrl()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ========== API 连接配置 ==========
+const isCloudStudio = !window.location.hostname.includes('localhost') &&
+  !window.location.hostname.includes('127.0.0.1') &&
+  !window.location.hostname.includes('lhr.life');
+const TUNNEL_URL = 'https://dfa6dc5f136bbf.lhr.life';
+const API_BASE = isCloudStudio ? TUNNEL_URL : '';
+
+function api(path, options = {}) {
+  // 优先使用用户自定义的后端地址，否则用默认的
+  const customUrl = localStorage.getItem('backend_url');
+  const base = customUrl || API_BASE;
+  const url = base + path;
+  return fetch(url, options);
+}
+
+const ADMIN_TOKEN_KEY = 'admin_session';
+let adminToken = localStorage.getItem(ADMIN_TOKEN_KEY);
+let currentTab = 'users';
+let editingUserId = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (adminToken) attemptAutoLogin();
+});
+
+async function attemptAutoLogin() {
+  try {
+    const res = await api('/api/admin/users?token=' + adminToken);
+    if (res.ok) showMainApp();
+    else { localStorage.removeItem(ADMIN_TOKEN_KEY); adminToken = null; }
+  } catch { localStorage.removeItem(ADMIN_TOKEN_KEY); adminToken = null; }
+}
+
+async function adminLogin() {
+  const pwd = document.getElementById('adminPassword').value;
+  if (!pwd) return;
+  try {
+    const res = await api('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const data = await res.json();
+    if (data.success) {
+      adminToken = data.token;
+      localStorage.setItem(ADMIN_TOKEN_KEY, adminToken);
+      showMainApp();
+    } else {
+      document.getElementById('loginErr').style.display = 'block';
+      document.getElementById('adminPassword').classList.add('error');
+    }
+  } catch {
+    document.getElementById('loginErr').style.display = 'block';
+  }
+}
+
+function showMainApp() {
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('appMain').style.display = 'block';
+  switchAdminTab('users');
+}
+
+function adminLogout() {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+  adminToken = null;
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('appMain').style.display = 'none';
+  document.getElementById('adminPassword').value = '';
+}
+
+function switchAdminTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
+  refreshData();
+}
+
+async function refreshData() {
+  const t = document.getElementById('tableContainer');
+  t.innerHTML = '<div class="loading">⏳ 加载中...</div>';
+  try {
+    switch (currentTab) {
+      case 'users': await loadUsers(); break;
+      case 'archived': await loadArchived(); break;
+      case 'matches': await loadMatches(); break;
+    }
+  } catch (e) { t.innerHTML = '<div class="empty">加载失败</div>'; }
+}
+
+async function loadUsers() {
+  const res = await api('/api/admin/users?token=' + adminToken);
+  const data = await res.json();
+  if (!data.success) { adminLogout(); return; }
+
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.count}</div><div class="stat-label">活跃用户</div></div>
+  `;
+
+  const t = document.getElementById('tableContainer');
+  if (data.users.length === 0) { t.innerHTML = '<div class="empty">暂无活跃用户</div>'; return; }
+
+  t.innerHTML = `<table>
+    <thead><tr>
+      <th>ID</th><th>昵称</th><th>年龄</th><th>性别</th><th>地区</th><th>星座</th><th>MBTI</th><th>性取向</th><th>关系类型</th><th>微信号</th><th>注册时间</th><th>操作</th>
+    </tr></thead>
+    <tbody>
+      ${data.users.map(u => `<tr>
+        <td>${u.id}</td>
+        <td><strong>${esc(u.nickname)}</strong></td>
+        <td>${u.age}</td>
+        <td>${u.gender}</td>
+        <td>${esc(u.region||'-')}</td>
+        <td>${esc(u.constellation||'-')}</td>
+        <td>${esc(u.mbti||'-')}</td>
+        <td>${esc(u.orientation)}</td>
+        <td>${(u.relationship_types||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</td>
+        <td class="wechat-cell">${esc(u.wechat_id)}</td>
+        <td>${new Date(u.created_at).toLocaleDateString('zh-CN')}</td>
+        <td>
+          <button class="action-btn" onclick='openEditModal(${JSON.stringify(u).replace(/'/g,"&#39;")})'>✏️ 编辑</button>
+          <button class="action-btn danger" onclick='deleteUser(${u.id},"${esc(u.nickname)}")'>🗑️</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function loadArchived() {
+  const res = await api('/api/admin/archived?token=' + adminToken);
+  const data = await res.json();
+  if (!data.success) { adminLogout(); return; }
+
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.count}</div><div class="stat-label">已匹配存档</div></div>
+  `;
+
+  const t = document.getElementById('tableContainer');
+  if (data.archived.length === 0) { t.innerHTML = '<div class="empty">暂无匹配存档</div>'; return; }
+
+  t.innerHTML = `<table>
+    <thead><tr>
+      <th>匹配ID</th><th>昵称</th><th>年龄</th><th>性别</th><th>地区</th><th>星座</th><th>MBTI</th><th>性取向</th><th>关系类型</th><th>微信号</th><th>匹配时间</th>
+    </tr></thead>
+    <tbody>
+      ${data.archived.map(a => {
+        const s = a.snapshot || {};
+        return `<tr>
+          <td>#${a.match_id}</td>
+          <td><strong>${esc(s.nickname||'-')}</strong></td>
+          <td>${s.age||'-'}</td>
+          <td>${s.gender||'-'}</td>
+          <td>${esc(s.region||'-')}</td>
+          <td>${esc(s.constellation||'-')}</td>
+          <td>${esc(s.mbti||'-')}</td>
+          <td>${esc(s.orientation||'-')}</td>
+          <td>${(s.relationship_types||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</td>
+          <td class="wechat-cell">${esc(s.wechat_id||'-')}</td>
+          <td>${new Date(a.matched_at).toLocaleDateString('zh-CN')}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function loadMatches() {
+  const res = await api('/api/admin/matches?token=' + adminToken);
+  const data = await res.json();
+  if (!data.success) { adminLogout(); return; }
+
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.count}</div><div class="stat-label">配对记录</div></div>
+  `;
+
+  const t = document.getElementById('tableContainer');
+  if (data.matches.length === 0) { t.innerHTML = '<div class="empty">暂无配对记录</div>'; return; }
+
+  t.innerHTML = `<table>
+    <thead><tr>
+      <th>匹配ID</th><th>用户A (昵称)</th><th>用户B (昵称)</th><th>用户A 微信号</th><th>用户B 微信号</th><th>匹配时间</th>
+    </tr></thead>
+    <tbody>
+      ${data.matches.map(m => {
+        const u1 = m.user1 || {};
+        const u2 = m.user2 || {};
+        return `<tr>
+          <td>#${m.id}</td>
+          <td><strong>${esc(u1.nickname||'用户'+m.user1_id)}</strong></td>
+          <td><strong>${esc(u2.nickname||'用户'+m.user2_id)}</strong></td>
+          <td class="wechat-cell">${esc(u1.wechat_id||'-')}</td>
+          <td class="wechat-cell">${esc(u2.wechat_id||'-')}</td>
+          <td>${new Date(m.matched_at).toLocaleDateString('zh-CN')}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+// Edit modal
+function openEditModal(user) {
+  editingUserId = user.id;
+  const form = document.getElementById('editForm');
+  form.innerHTML = `
+    <div class="form-group"><label>昵称</label><input id="editNickname" value="${esc(user.nickname)}"></div>
+    <div class="form-group"><label>年龄</label><input id="editAge" type="number" value="${user.age}" min="1" max="120"></div>
+    <div class="form-group"><label>性别</label><select id="editGender"><option value="男" ${user.gender==='男'?'selected':''}>男</option><option value="女" ${user.gender==='女'?'selected':''}>女</option></select></div>
+    <div class="form-group"><label>地区</label><input id="editRegion" value="${esc(user.region||'')}"></div>
+    <div class="form-group"><label>星座</label><input id="editConstellation" value="${esc(user.constellation||'')}"></div>
+    <div class="form-group"><label>MBTI</label><input id="editMbti" value="${esc(user.mbti||'')}"></div>
+    <div class="form-group"><label>性取向</label><input id="editOrientation" value="${esc(user.orientation)}"></div>
+    <div class="form-group"><label>关系类型（逗号分隔，如：固玩,对象）</label><input id="editTypes" value="${(user.relationship_types||[]).join(',')}"></div>
+    <div class="form-group"><label>微信号</label><input id="editWechat" value="${esc(user.wechat_id)}"></div>
+  `;
+  document.getElementById('editModal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').style.display = 'none';
+  editingUserId = null;
+}
+
+async function saveEdit() {
+  const body = {
+    token: adminToken,
+    nickname: document.getElementById('editNickname').value.trim(),
+    age: parseInt(document.getElementById('editAge').value),
+    gender: document.getElementById('editGender').value,
+    region: document.getElementById('editRegion').value.trim(),
+    constellation: document.getElementById('editConstellation').value.trim(),
+    mbti: document.getElementById('editMbti').value.trim(),
+    orientation: document.getElementById('editOrientation').value.trim(),
+    relationship_types: document.getElementById('editTypes').value.split(',').map(s=>s.trim()).filter(Boolean),
+    wechat_id: document.getElementById('editWechat').value.trim()
+  };
+
+  try {
+    const res = await api('/api/admin/user/' + editingUserId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('✅ 用户信息已更新', 'success');
+      closeEditModal();
+      refreshData();
+    } else { showToast(data.error || '保存失败', 'error'); }
+  } catch { showToast('网络错误', 'error'); }
+}
+
+async function deleteUser(id, nickname) {
+  if (!confirm(`确定要删除用户「${nickname}」吗？此操作不可撤销。`)) return;
+  try {
+    const res = await api('/api/admin/user/' + id, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: adminToken })
+    });
+    const data = await res.json();
+    if (data.success) { showToast('已删除', 'success'); refreshData(); }
+    else { showToast(data.error || '删除失败', 'error'); }
+  } catch { showToast('网络错误', 'error'); }
+}
+
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + (type||'') + ' show';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ========== 🔧 后端连接设置 ==========
+document.addEventListener('DOMContentLoaded', () => {
+  if (isCloudStudio) {
+    document.getElementById('backendSettings').style.display = 'block';
+    const savedUrl = localStorage.getItem('backend_url');
+    if (savedUrl) document.getElementById('backendUrlInput').value = savedUrl;
+    checkBackendConnection();
+  }
+});
+
+document.getElementById('settingsToggle')?.addEventListener('click', () => {
+  const panel = document.getElementById('settingsPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') checkBackendConnection();
+});
+
+document.getElementById('settingsClose')?.addEventListener('click', () => {
+  document.getElementById('settingsPanel').style.display = 'none';
+});
+
+function updateBackendUrl() {
+  const url = document.getElementById('backendUrlInput').value.trim();
+  if (!url) return;
+  const fullUrl = url.startsWith('http') ? url : 'https://' + url;
+  const cleanUrl = fullUrl.replace(/\/+$/, '');
+  localStorage.setItem('backend_url', cleanUrl);
+  document.getElementById('settingsPanel').style.display = 'none';
+  showToast('✅ 后端地址已更新，刷新中...', 'success');
+  setTimeout(() => { refreshData(); checkBackendConnection(); }, 500);
+}
+
+async function checkBackendConnection() {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  const input = document.getElementById('backendUrlInput');
+  const base = localStorage.getItem('backend_url') || API_BASE;
+  if (input && !input.value) input.value = base.replace(/\/+$/, '');
+
+  dot.className = 'status-dot';
+  text.textContent = '检测中...';
+
+  try {
+    const res = await fetch(base + '/api/health', {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000)
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      dot.className = 'status-dot online';
+      text.textContent = `已连接 (v${data.version})`;
+    } else {
+      dot.className = 'status-dot offline';
+      text.textContent = '后端异常';
+    }
+  } catch {
+    dot.className = 'status-dot offline';
+    text.textContent = '无法连接后端';
+  }
+}
+
+if (isCloudStudio) setInterval(checkBackendConnection, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Render Blueprint — 一键部署寻星后端
+# 使用方法: 在 render.com 创建 Blueprint，自动读取此文件
+services:
+  - type: web
+    name: xunxing-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+    disk:
+      name: sqlite-data
+      mountPath: /app/database
+      sizeGB: 1

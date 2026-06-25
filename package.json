@@ -1,0 +1,17 @@
+{
+  "name": "wechat-match",
+  "version": "1.0.0",
+  "description": "微信交友匹配系统 - 根据关系类型匹配好友",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "localtunnel": "^2.0.2",
+    "ngrok": "^5.0.0-beta.2",
+    "qrcode": "^1.5.4"
+  }
+}
